@@ -2,19 +2,25 @@ package org.jetbrains.bazel.languages.projectview
 
 import com.google.common.hash.HashCode
 import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.readAction
 import com.intellij.openapi.application.writeAction
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.diagnostic.logger
+import com.intellij.openapi.fileTypes.FileTypeManager
+import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.progress.runBlockingCancellable
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.psi.PsiDocumentManager
+import com.intellij.psi.PsiFile
 import com.intellij.psi.PsiFileFactory
 import com.intellij.psi.PsiManager
 import kotlinx.coroutines.runBlocking
 import org.jetbrains.bazel.config.rootDir
 import org.jetbrains.bazel.flow.open.ProjectViewFileUtils
+import org.jetbrains.bazel.languages.projectview.base.ProjectViewFileType
 import org.jetbrains.bazel.languages.projectview.base.ProjectViewLanguage
 import org.jetbrains.bazel.languages.projectview.psi.ProjectViewPsiFile
 import org.jetbrains.bazel.settings.bazel.bazelProjectSettings
@@ -30,6 +36,7 @@ import kotlin.io.path.notExists
  */
 @Service(Service.Level.PROJECT)
 class ProjectViewService(private val project: Project) {
+  private val log = logger<ProjectViewService>()
   /**
    * Gets the current ProjectView, parsing it if necessary.
    * Uses caching with file modification time checking for efficiency.
@@ -80,9 +87,10 @@ class ProjectViewService(private val project: Project) {
   private suspend fun parseProjectViewAsync(projectViewPath: Path): ProjectView? = readAction {
     val virtualFile = VirtualFileManager.getInstance().findFileByNioPath(projectViewPath)
       ?: return@readAction null
-    val psi = PsiManager.getInstance(project).findFile(virtualFile) as? ProjectViewPsiFile
+    val psiFile = PsiManager.getInstance(project).findFile(virtualFile) as? ProjectViewPsiFile
       ?: return@readAction null
-    return@readAction ProjectView.fromProjectViewPsiFile(psi)
+    ensureCorrectFileType(virtualFile, psiFile, projectViewPath)
+    return@readAction ProjectView.fromProjectViewPsiFile(psiFile)
   }
 
   private fun getDefaultProjectView(): ProjectView =
@@ -101,6 +109,63 @@ class ProjectViewService(private val project: Project) {
     writeAction {
       PsiDocumentManager.getInstance(project)
         .reparseFiles(imports + projectViewVFile, false)
+    }
+  }
+
+  /**
+   * Ensures that .bazelproject file has correct ProjectView file type.
+   * Attempts auto-fix if needed, throws exception if fails.
+   */
+  private fun ensureCorrectFileType(virtualFile: VirtualFile, psiFile: PsiFile?, projectViewPath: Path) {
+    if (psiFile is ProjectViewPsiFile) {
+      return
+    }
+
+    if (psiFile != null) {
+      log.warn("ProjectView file type not recognized: path=$projectViewPath, fileType=${virtualFile.fileType.name}, language=${psiFile.language}")
+
+      if (!tryAutoFixFileTypeRegistration(virtualFile)) {
+        throw IllegalStateException("""
+          .bazelproject file not recognized as ProjectView file type.
+
+          Please fix manually:
+          1. Go to Settings → Editor → File Types
+          2. Find "ProjectView file for Bazel project" in the list
+          3. Add "*.bazelproject" to File name patterns
+          4. Restart IDE and try sync again
+        """.trimIndent())
+      }
+    }
+  }
+
+  /**
+   * Attempts to auto-fix ProjectView file type registration by associating *.bazelproject pattern
+   * with ProjectViewFileType.
+   * 
+   * @param virtualFile the .bazelproject file that needs to be fixed
+   * @return true if auto-fix succeeded, false if it failed
+   */
+  private fun tryAutoFixFileTypeRegistration(virtualFile: VirtualFile): Boolean {
+    log.info("Attempting to auto-fix ProjectView file type registration...")
+
+    return try {
+      ApplicationManager.getApplication().invokeAndWait {
+        ApplicationManager.getApplication().runWriteAction {
+          val fileTypeManager = FileTypeManager.getInstance()
+          fileTypeManager.associatePattern(ProjectViewFileType, "*.bazelproject")
+        }
+      }
+
+      // Force refresh the virtual file to pick up new file type
+      virtualFile.refresh(false, false)
+
+      log.info("Auto-fix completed: file type registration updated")
+      true
+    } catch (e: ProcessCanceledException) {
+      throw e
+    } catch (e: Exception) {
+      log.warn("Auto-fix failed with exception: ${e.message}", e)
+      false
     }
   }
 
