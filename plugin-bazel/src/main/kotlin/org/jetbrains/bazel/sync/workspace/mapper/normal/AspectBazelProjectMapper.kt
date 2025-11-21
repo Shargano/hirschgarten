@@ -270,7 +270,7 @@ class AspectBazelProjectMapper(
       .mapNotNull { target ->
         createLibrary(
           workspaceContext,
-          Label.parse(target.id + "_output_jars"),
+          Label.parse(target.id + "_internal_ij_output_jars"),
           target,
           onlyOutputJars = true,
           containsInternalJars = true,
