@@ -3,8 +3,10 @@ package org.jetbrains.bazel.runnerAction
 import com.intellij.execution.RunnerAndConfigurationSettings
 import com.intellij.openapi.project.Project
 import org.jetbrains.bazel.bazelrunner.HasProgramArguments
+import org.jetbrains.bazel.commons.toProgramArguments
 import org.jetbrains.bazel.config.BazelPluginBundle
 import org.jetbrains.bazel.languages.starlark.repomapping.toShortString
+import org.jetbrains.bazel.run.commandLine.transformProgramArguments
 import org.jetbrains.bazel.run.config.BazelRunConfiguration
 import org.jetbrains.bazel.run.test.setTestFilter
 import org.jetbrains.bsp.protocol.BuildTarget
@@ -50,6 +52,15 @@ class TestTargetAction(
     }
     (configuration as BazelRunConfiguration).handler?.apply {
       (state as? HasProgramArguments)?.programArguments?.addAll(testExecutableArguments)
+    }
+
+    // Handle JvmTestState
+    (configuration as BazelRunConfiguration).handler?.apply {
+      (state as? org.jetbrains.bazel.run.state.HasProgramArguments)?.let {
+        if (it.programArguments == null) {
+          it.programArguments = transformProgramArguments(testExecutableArguments)
+        }
+      }
     }
   }
 }
