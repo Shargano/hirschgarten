@@ -4,7 +4,7 @@ import com.intellij.build.events.impl.FailureResultImpl
 import kotlinx.coroutines.Deferred
 import org.jetbrains.bazel.commons.BazelStatus
 import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.ui.console.TaskConsole
+import org.jetbrains.bazel.progress.TaskConsole
 import org.jetbrains.bsp.protocol.TaskId
 import java.util.concurrent.CancellationException
 import java.util.concurrent.TimeoutException
